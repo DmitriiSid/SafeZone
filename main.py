@@ -268,7 +268,7 @@ def clean_scraped_phones(df: pd.DataFrame, phone_scraped_column = "Phone Numbers
     phones_exp = explode_df(df,phone_scraped_column)
     ress_df = udf(phones_exp,f"{phone_scraped_column}_scraped")
     phones_exp["formated_number"] = ress_df["formated_number"]
-    phones_exp.drop(columns=["{phone_scraped_column}_scraped"], inplace= True)
+    phones_exp.drop(columns=[f"{phone_scraped_column}_scraped"], inplace= True)
     phones_deduped = phones_exp.drop_duplicates(subset=['Base Website', 'formated_number'])
     filtered_df = phones_deduped[~phones_deduped['formated_number'].apply(has_more_than_5_consecutive_zeros)]
     phones_df = filtered_df.sort_values(by="formated_number", ascending=True)
@@ -280,18 +280,17 @@ def clean_email(email):
         return email
     # Regular expression to find valid email addresses
     email_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b')
-    # Find all valid email addresses in the string
-    valid_emails = email_pattern.findall(email)
-    # Fix emails that have additional symbols after ".cz"
+    # Find all valid email addresses in the string and convert them to lowercase
+    valid_emails = [e.lower() for e in email_pattern.findall(email)]
+    # Fix emails that have additional symbols after specified domains
+    domains = ['.cz', '.com', '.eu', '.org']
     cleaned_emails = []
     for email in valid_emails:
-        if email.endswith('.cz'):
-            cleaned_emails.append(email)
-        else:
-            em1 = re.sub(r'\.cz.*', '.cz', email)            
-            em2 = re.sub(r'\.com.*', '.com', em1)            
-            em3 = re.sub(r'\.eu.*', '.eu', em2)            
-            cleaned_emails.append(re.sub(r'\.org.*', '.org', em3))
+        for domain in domains:
+            if email.endswith(domain):
+                email = re.sub(f'{domain}.*', domain, email)
+                break
+        cleaned_emails.append(email)
     return ', '.join(cleaned_emails)
 
 def clean_scraped_emails(df: pd.DataFrame, email_scraped_column = "Emails") -> pd.DataFrame:
@@ -301,6 +300,17 @@ def clean_scraped_emails(df: pd.DataFrame, email_scraped_column = "Emails") -> p
     # emails_sorted = emails_deduped.sort_values(by="Emails_scraped", ascending=False)
     return emails_deduped
 
+def db_pomoci_transform(df:pd.DataFrame) -> pd.DataFrame:
+    """
+    This function prepare data initial data for validation
+    """
+    df['E-mail'] = df['E-mail'].apply(clean_email)
+    ress_df = udf(df,"Telefon")
+    df['Telefon'] = ress_df["formated_number"]
+    df = df[~df["Webová stránka"].isna()]
+    df.loc[df['Webová stránka'].str.startswith('www'), 'web'] = df['Webová stránka'].str.replace('^www', 'https://www', regex=True)
+    return df
+
 
 def main():
     # Execute the process
@@ -308,6 +318,43 @@ def main():
     result_scraper.to_csv(f'data/df_scraped_{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}.csv')
     df_phones_scraped = clean_scraped_phones(result_scraper)
     df_emails_scraped = clean_scraped_emails(result_scraper)
+    df_emails_scraped = df_emails_scraped[['Base Website', 'Scraped Page', 'Emails_scraped']]
+    df_emails_scraped['Contact_type'] = 'Email'
+    df_emails_scraped.rename(columns={'Emails_scraped': 'Contact'}, inplace=True)
+
+    df_phones_scraped = df_phones_scraped[['Base Website', 'Scraped Page', 'formated_number']]
+    df_phones_scraped['Contact_type'] = 'Phone'
+    df_phones_scraped.rename(columns={'formated_number': 'Contact'}, inplace=True)
+
+    # Combine the DataFrames by appending rows
+    combined_df = pd.concat([df_phones_scraped, df_emails_scraped], ignore_index=True)
+    combined_df.shape
+    db_pomoci = pd.read_csv("../db_pomoci.csv")
+    db_pomoci = db_pomoci_transform(db_pomoci)
+    maps_results = pd.read_csv('../data/maps_results.csv', delimiter=";")
+    maps_contacts = pd.concat([
+    maps_results[['Email']].rename(columns={'Email': 'Contact'}),
+    maps_results[['API Phone']].rename(columns={'API Phone': 'Contact'})
+    ]).dropna().drop_duplicates()
+
+    # Extract contacts from combined_df
+    scraped_contacts = combined_df[['Contact']].dropna().drop_duplicates()
+
+    # Function to check if a contact exists in the scraped data
+    def check_contact(contact, contacts_df):
+        return contact in contacts_df['Contact'].values
+
+    # Check and flag contacts in db_pomoci
+    db_pomoci['Matched'] = db_pomoci.apply(
+        lambda row: 'matched' if check_contact(row['E-mail'], maps_contacts) or 
+                            check_contact(row['Telefon'], maps_contacts) or 
+                            check_contact(row['E-mail'], scraped_contacts) or 
+                            check_contact(row['Telefon'], scraped_contacts) 
+                    else 'unmatched', axis=1)
+    db_pomoci.to_csv('../data/2_06/db_pomoci_flagged.csv', index=False)
+
+    #Validation part 
+
 
 if __name__ == "__main__":
     main()    
