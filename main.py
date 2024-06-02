@@ -10,25 +10,67 @@ from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import datetime
+import os
+
+RUN_EVIRONMENT = "kagle"
+
+if RUN_EVIRONMENT == "local":
+    DB_POMOCI_PATH ="db_pomoci.csv"
+    MAX_WORKERS = 2
+    SAVE_FILES_PATH = "data/"
+    MAPS_SCRAPED = "../data/maps_results.csv"
+    FLAGGED_DATA_PATH = f'../data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}/db_pomoci_flagged.csv'
+    SCRAPED_DATA_PATH = f'../data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}/scraped_data.csv'
+    if not os.path.exists("../data"):
+        os.makedirs("../data")
+    if not os.path.exists(f'../data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}'):
+        os.makedirs(f'../data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}')
+    pass
+elif RUN_EVIRONMENT == "keboola":
+    pass
+elif RUN_EVIRONMENT == "colab":
+    pass
+elif RUN_EVIRONMENT == "kagle":
+    DB_POMOCI_PATH ="/kaggle/input/db-pomoci/db_pomoci.csv"
+    MAX_WORKERS = 12
+    SAVE_FILES_PATH = "data/"
+    MAPS_SCRAPED = "/kaggle/input/maps-result/maps_results.csv"
+    FLAGGED_DATA_PATH = f'/kaggle/working/data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}/db_pomoci_flagged.csv'
+    SCRAPED_DATA_PATH = '/kaggle/working/data/'
+    if not os.path.exists("../data"):
+        os.makedirs("../data")
+    if not os.path.exists(f'/kaggle/working/data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}'):
+        os.makedirs(f'/kaggle/working/data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}')
+else:
+    raise EnvironmentError("this environment is not supported")
+
+
+
 
 pd.set_option('display.max_rows', 500)
+def ensure_url_format(url):
+    if not (url.startswith('www') or url.startswith('http') or url.startswith('https')):
+        return 'www.' + url
+    return url
+
+
 
 def data_prep(subset:bool = False) -> pd.DataFrame:
-    db_pomoci = pd.read_csv("db_pomoci.csv")
+    db_pomoci = pd.read_csv(DB_POMOCI_PATH)
     df = db_pomoci.rename(columns={"Webová stránka" : "web", "Název":"nazev","E-mail":"email"})
     black_list = ['http://www.dc-brno.cz','www.freeklub.cz', 'http://www.cszs.cz/','http://www.fokustabor.cz/centrum-dusevniho-zdravi-_-komunitni-tym-tabor']
     df = df[(~df["web"].isna()) & (~df['web'].isin(black_list))]
     df['web'] = df['web'].str.replace(r'\s+', '', regex=True)
-    df.loc[df['web'].str.contains(r'\.cz/.+'), 'web'] = df['web'].str.replace(r'\.cz/.+', '.cz', regex=True)
+    df_replace = df.copy()
+    df_replace.loc[df_replace['web'].str.contains(r'\.cz/.+'), 'web'] = df_replace['web'].str.replace(r'\.cz/.+', '.cz', regex=True)
+    #df.loc[df['web'].str.contains(r'\.cz/.+'), 'web'] = df['web'].str.replace(r'\.cz/.+', '.cz', regex=True)
+    # Apply the function to the 'web' column
+    df['web'] = df['web'].apply(ensure_url_format)
     df.loc[df['web'].str.startswith('www'), 'web'] = df['web'].str.replace('^www', 'https://www', regex=True)
-    df_agg_tel = df.groupby("web")["Telefon"].agg(list).reset_index()
-    df_agg_email = df.groupby("web")["email"].agg(list).reset_index()
-    df_agg = pd.merge(df_agg_tel, df_agg_email, on="web")#.drop("index", axis= 1)
-    df_agg = df_agg.rename(columns={'web': 'web', 'Telefon': 'Telefon'})
-    df_agg = pd.DataFrame(df_agg)
+    df = pd.concat([df, df_replace]).drop_duplicates().reset_index(drop=True)
     if subset:
-        df_agg = df_agg.head(100) # ubset first 300 rows
-    return df_agg
+        df = df.head(100) # ubset first 300 rows
+    return df
 
 
 def scrape_urls(df):    
@@ -66,7 +108,7 @@ def scrape_urls(df):
                 return emails, phones, url, page_type
             except requests.RequestException as e:
                 if attempt < retries - 1:
-                                        time.sleep(backoff_factor * (2 ** attempt))
+                    time.sleep(backoff_factor * (2 ** attempt))
                 else:
                     return set(), set(), url, page_type
 
@@ -150,7 +192,7 @@ def scrape_urls(df):
         return all_results
 
     # Use ThreadPoolExecutor to scrape URLs in parallel
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {executor.submit(process_url, url): url for url in urls}
         for future in tqdm(as_completed(futures), total=len(futures)):
             try:
@@ -166,9 +208,9 @@ def scrape_urls(df):
 def check_empty_or_nan(value):
     return pd.isna(value) or value == {} or value == [] or value == ''
 
-def process_data(max_iterations=1):
+def process_data(max_iterations=0):
     df = data_prep(subset=False)
-    #df = df.iloc[200:220]
+    #df = df.iloc[200:230]
     scraped_dfs = []
 
     # Split the DataFrame into four parts
@@ -315,7 +357,7 @@ def db_pomoci_transform(df:pd.DataFrame) -> pd.DataFrame:
 def main():
     # Execute the process
     result_scraper = process_data()
-    result_scraper.to_csv(f'data/df_scraped_{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}.csv')
+    result_scraper.to_csv(f'{SAVE_FILES_PATH}df_scraped_{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}.csv')
     df_phones_scraped = clean_scraped_phones(result_scraper)
     df_emails_scraped = clean_scraped_emails(result_scraper)
     df_emails_scraped = df_emails_scraped[['Base Website', 'Scraped Page', 'Emails_scraped']]
@@ -328,10 +370,11 @@ def main():
 
     # Combine the DataFrames by appending rows
     combined_df = pd.concat([df_phones_scraped, df_emails_scraped], ignore_index=True)
+    combined_df.to_csv(SCRAPED_DATA_PATH, index=False)
     combined_df.shape
-    db_pomoci = pd.read_csv("../db_pomoci.csv")
+    db_pomoci = pd.read_csv(f"{DB_POMOCI_PATH}")
     db_pomoci = db_pomoci_transform(db_pomoci)
-    maps_results = pd.read_csv('../data/maps_results.csv', delimiter=";")
+    maps_results = pd.read_csv(MAPS_SCRAPED, delimiter=";")
     maps_contacts = pd.concat([
     maps_results[['Email']].rename(columns={'Email': 'Contact'}),
     maps_results[['API Phone']].rename(columns={'API Phone': 'Contact'})
@@ -340,21 +383,51 @@ def main():
     # Extract contacts from combined_df
     scraped_contacts = combined_df[['Contact']].dropna().drop_duplicates()
 
-    # Function to check if a contact exists in the scraped data
-    def check_contact(contact, contacts_df):
-        return contact in contacts_df['Contact'].values
+    def check_contact(contact, contacts_df, source_name):
+        """
+        Check if a contact exists in the given contacts DataFrame.
+        """
+        if contact in contacts_df['Contact'].values:
+            return source_name
+        return None
 
-    # Check and flag contacts in db_pomoci
-    db_pomoci['Matched'] = db_pomoci.apply(
-        lambda row: 'matched' if check_contact(row['E-mail'], maps_contacts) or 
-                            check_contact(row['Telefon'], maps_contacts) or 
-                            check_contact(row['E-mail'], scraped_contacts) or 
-                            check_contact(row['Telefon'], scraped_contacts) 
-                    else 'unmatched', axis=1)
-    db_pomoci.to_csv('../data/2_06/db_pomoci_flagged.csv', index=False)
+    def match_contact(row, maps_contacts, scraped_contacts):
+        """
+        Match contact details in the row with known contact sources.
+        """
+        sources = set()
 
-    #Validation part 
+        # Check against maps contacts
+#         if check_contact(row['E-mail'], maps_contacts, 'maps_contacts'):
+#             sources.add('maps_contacts_e_mail')
+        if check_contact(row['Telefon'], maps_contacts, 'maps_contacts'):
+            sources.add('maps_contacts_telefon')
 
+        # Check against scraped contacts
+        if check_contact(row['E-mail'], scraped_contacts, 'scraped_contacts'):
+            sources.add('scraped_contacts_email')
+        if check_contact(row['Telefon'], scraped_contacts, 'scraped_contacts'):
+            sources.add('scraped_contacts_telefon')
+
+        if sources:
+            return 'matched', ', '.join(sources)
+        return 'unmatched', None
+    
+    db_pomoci[['Matched', 'Source']] = db_pomoci.apply(
+    lambda row: pd.Series(match_contact(row, maps_contacts, scraped_contacts)), axis=1)
+
+#     # Check and flag contacts in db_pomoci
+#     db_pomoci['Matched'] = db_pomoci.apply(
+#         lambda row: 'matched' if check_contact(row['E-mail'], maps_contacts) or 
+#                             check_contact(row['Telefon'], maps_contacts) or 
+#                             check_contact(row['E-mail'], scraped_contacts) or 
+#                             check_contact(row['Telefon'], scraped_contacts) 
+#                     else 'unmatched', axis=1)
+    matched_num = db_pomoci[db_pomoci["Matched"]=="matched"].shape[0]
+    unmatched_num = db_pomoci[db_pomoci["Matched"]=="unmatched"].shape[0]
+    print(f"Data baze obsahuje {matched_num} schodnych kontaktu a {unmatched_num} neschodnych kontaktu")
+    db_pomoci.to_csv(FLAGGED_DATA_PATH, index=False)        
+    
 
 if __name__ == "__main__":
     main()    
