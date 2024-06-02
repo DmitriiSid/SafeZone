@@ -4,6 +4,8 @@ import requests
 from bs4 import BeautifulSoup
 import re
 from tqdm import tqdm 
+import phonenumbers
+import phonenumbers.geocoder
 from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
@@ -223,9 +225,96 @@ def process_data(max_iterations=1):
 
     return result_scraper
 
-# Execute the process
-result_scraper = process_data()
-result_scraper.to_csv(f'data/df_scraped_{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}.csv')
+
+
+###
+# Phones Part
+### 
+def py_parse_phonenumber(num):
+    try:
+        parsed_num = phonenumbers.parse(num, 'CZ')
+        phonenumbers.is_possible_number_with_reason(parsed_num)
+        return {
+            'formated_number':phonenumbers.format_number(parsed_num, phonenumbers.PhoneNumberFormat.E164),
+            'number': parsed_num.national_number,
+            'prefix': parsed_num.country_code,
+            'country_code': phonenumbers.region_code_for_number(parsed_num),
+            'valid': phonenumbers.is_valid_number(parsed_num),
+            'possible': phonenumbers.is_possible_number(parsed_num),
+            'parsed': True
+        }
+    except Exception as e:
+        return {'number': num, 'prefix': None, 'country_code': None, 'valid': False, 'possible': False, 'parsed': False}
+
+def udf(df: pd.DataFrame, column_name: str):
+    results = df[column_name].apply(py_parse_phonenumber)
+    parsed_df = pd.DataFrame(results.tolist())
+    return parsed_df
+
+def explode_df(df:pd.DataFrame, column_name:str) -> pd.DataFrame:
+    #df_res = pd.read_csv("../data/1_06/df_scraped_full.csv")
+    df_res = df
+    df_res[f'{column_name}_scraped'] = df_res[column_name].str.split(', ')
+   # df_res['emails_scraped'] = df_res['Emails'].str.split(', ')
+    df_res_phones = df_res[["Base Website", "Scraped Page",f"{column_name}_scraped"]]
+    df_res_exp = df_res_phones.explode(f'{column_name}_scraped').reset_index(drop=True)
+    return df_res_exp
+
+def has_more_than_5_consecutive_zeros(number):
+    return bool(re.search(r'0{4,}', str(number)))
+
+
+def clean_scraped_phones(df: pd.DataFrame, phone_scraped_column = "Phone Numbers") -> pd.DataFrame:
+    phones_exp = explode_df(df,phone_scraped_column)
+    ress_df = udf(phones_exp,f"{phone_scraped_column}_scraped")
+    phones_exp["formated_number"] = ress_df["formated_number"]
+    phones_exp.drop(columns=["{phone_scraped_column}_scraped"], inplace= True)
+    phones_deduped = phones_exp.drop_duplicates(subset=['Base Website', 'formated_number'])
+    filtered_df = phones_deduped[~phones_deduped['formated_number'].apply(has_more_than_5_consecutive_zeros)]
+    phones_df = filtered_df.sort_values(by="formated_number", ascending=True)
+    return phones_df
+
+# Emails Part 
+def clean_email(email):
+    if pd.isna(email):
+        return email
+    # Regular expression to find valid email addresses
+    email_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b')
+    # Find all valid email addresses in the string
+    valid_emails = email_pattern.findall(email)
+    # Fix emails that have additional symbols after ".cz"
+    cleaned_emails = []
+    for email in valid_emails:
+        if email.endswith('.cz'):
+            cleaned_emails.append(email)
+        else:
+            em1 = re.sub(r'\.cz.*', '.cz', email)            
+            em2 = re.sub(r'\.com.*', '.com', em1)            
+            em3 = re.sub(r'\.eu.*', '.eu', em2)            
+            cleaned_emails.append(re.sub(r'\.org.*', '.org', em3))
+    return ', '.join(cleaned_emails)
+
+def clean_scraped_emails(df: pd.DataFrame, email_scraped_column = "Emails") -> pd.DataFrame:
+    emails_exp = explode_df(df,email_scraped_column)
+    emails_exp[f'{email_scraped_column}_scraped'] = emails_exp[f'{email_scraped_column}_scraped'].apply(clean_email)
+    emails_deduped = emails_exp.drop_duplicates(subset=['Base Website', f'{email_scraped_column}_scraped'])
+    # emails_sorted = emails_deduped.sort_values(by="Emails_scraped", ascending=False)
+    return emails_deduped
+
+
+def main():
+    # Execute the process
+    result_scraper = process_data()
+    result_scraper.to_csv(f'data/df_scraped_{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}.csv')
+    df_phones_scraped = clean_scraped_phones(result_scraper)
+    df_emails_scraped = clean_scraped_emails(result_scraper)
+
+if __name__ == "__main__":
+    main()    
+
+
+
+
 
 
 
