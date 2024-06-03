@@ -111,6 +111,8 @@ def db_pomoci_transform(df:pd.DataFrame) -> pd.DataFrame:
     df = df[~df["Webová stránka"].isna()]
     df.loc[df['Webová stránka'].str.startswith('www'), 'web'] = df['Webová stránka'].str.replace('^www', 'https://www', regex=True)
     return df
+
+    
 def main():
     start_time = time.time()
     db_pomoci = pd.read_csv(DB_POMOCI_PATH)
