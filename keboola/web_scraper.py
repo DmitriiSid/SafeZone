@@ -3,7 +3,7 @@ import numpy as np
 import requests
 from bs4 import BeautifulSoup
 import re
-from tqdm import tqdm 
+from tqdm import tqdm
 import phonenumbers
 import phonenumbers.geocoder
 from urllib.parse import urljoin, urlparse
@@ -15,7 +15,7 @@ import os
 RUN_EVIRONMENT = "keboola"
 
 if RUN_EVIRONMENT == "local":
-    DB_POMOCI_PATH ="db_pomoci.csv"
+    DB_POMOCI_PATH = "db_pomoci.csv"
     MAX_WORKERS = 2
     SAVE_FILES_PATH = "data/"
     MAPS_SCRAPED = "../data/maps_results.csv"
@@ -24,7 +24,8 @@ if RUN_EVIRONMENT == "local":
     if not os.path.exists("../data"):
         os.makedirs("../data")
     if not os.path.exists(f'../data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}'):
-        os.makedirs(f'../data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}')
+        os.makedirs(
+            f'../data/{datetime.datetime.now().day}_{datetime.datetime.now().strftime("%m")}')
     pass
 elif RUN_EVIRONMENT == "keboola":
     DB_POMOCI_PATH = "in/tables/db_pomoci.csv"
@@ -34,7 +35,7 @@ elif RUN_EVIRONMENT == "keboola":
 else:
     raise EnvironmentError("this environment is not supported")
 
-    
+
 def ensure_url_format(url):
     """
     Zajisti, aby URL melo spravny format, pokud nezacina na 'www', 'http' nebo 'https', prida 'www.'
@@ -50,7 +51,7 @@ def ensure_url_format(url):
     return url
 
 
-def data_prep(subset:bool = False) -> pd.DataFrame:
+def data_prep(subset: bool = False) -> pd.DataFrame:
     """
     Pripravi data pro skript, odstrani nepouzitelne odkazy a upravi format webovych stranek.
 
@@ -62,20 +63,25 @@ def data_prep(subset:bool = False) -> pd.DataFrame:
     """
 
     db_pomoci = pd.read_csv(DB_POMOCI_PATH)
-    df = db_pomoci.rename(columns={"Webova_stranka" : "web", "Nazev":"nazev","E_mail":"email"})
-    black_list = ['http://www.dc-brno.cz','www.freeklub.cz', 'http://www.cszs.cz/','http://www.fokustabor.cz/centrum-dusevniho-zdravi-_-komunitni-tym-tabor']
+    df = db_pomoci.rename(
+        columns={"Webova_stranka": "web", "Nazev": "nazev", "E_mail": "email"})
+    black_list = ['http://www.dc-brno.cz', 'www.freeklub.cz', 'http://www.cszs.cz/',
+                  'http://www.fokustabor.cz/centrum-dusevniho-zdravi-_-komunitni-tym-tabor']
     df = df[(~df["web"].isna()) & (~df['web'].isin(black_list))]
     df['web'] = df['web'].str.replace(r'\s+', '', regex=True)
     df_replace = df.copy()
-    df_replace.loc[df_replace['web'].str.contains(r'\.cz/.+'), 'web'] = df_replace['web'].str.replace(r'\.cz/.+', '.cz', regex=True)
-    #df.loc[df['web'].str.contains(r'\.cz/.+'), 'web'] = df['web'].str.replace(r'\.cz/.+', '.cz', regex=True)
+    df_replace.loc[df_replace['web'].str.contains(
+        r'\.cz/.+'), 'web'] = df_replace['web'].str.replace(r'\.cz/.+', '.cz', regex=True)
+    # df.loc[df['web'].str.contains(r'\.cz/.+'), 'web'] = df['web'].str.replace(r'\.cz/.+', '.cz', regex=True)
     # Apply the function to the 'web' column
     df['web'] = df['web'].apply(ensure_url_format)
-    df.loc[df['web'].str.startswith('www'), 'web'] = df['web'].str.replace('^www', 'https://www', regex=True)
+    df.loc[df['web'].str.startswith('www'), 'web'] = df['web'].str.replace(
+        '^www', 'https://www', regex=True)
     df = pd.concat([df, df_replace]).drop_duplicates().reset_index(drop=True)
     if subset:
-        df = df.head(100) # ubset first 300 rows
+        df = df.head(100)  # ubset first 300 rows
     return df
+
 
 def validate_url(url):
     """
@@ -144,9 +150,10 @@ def scrape_urls(df):
         url = validate_url(url)
         for attempt in range(retries):
             try:
-                #print(url)
+                # print(url)
                 response = requests.get(url, timeout=10)
-                response.raise_for_status()  # Raises an HTTPError if the response status code is 4XX or 5XX
+                # Raises an HTTPError if the response status code is 4XX or 5XX
+                response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
                 emails = set(email_regex.findall(soup.text))
                 phones = set(phone_regex.findall(soup.text))
@@ -190,7 +197,7 @@ def scrape_urls(df):
 
             links = []
             for link in soup.find_all('a', href=True):
-                if 'kontakt' in link.text.lower() or 'contact' in link.text.lower() or 'kontakty' in link.text.lower() or 'o nás' in link.text.lower()  or 'kdo-jsem' in link.text.lower() or 'o-nas' in link.text.lower():
+                if 'kontakt' in link.text.lower() or 'contact' in link.text.lower() or 'kontakty' in link.text.lower() or 'o nás' in link.text.lower() or 'kdo-jsem' in link.text.lower() or 'o-nas' in link.text.lower():
                     contact_href = urljoin(base_url, link['href'])
                     if contact_href not in visited_urls:
                         links.append(contact_href)
@@ -228,13 +235,16 @@ def scrape_urls(df):
                     else:
                         return set(), set(), url, page_type
 
-        main_emails, main_phones, main_url, main_page_type = scrape_page(base_url, 'main')
+        main_emails, main_phones, main_url, main_page_type = scrape_page(
+            base_url, 'main')
         emails.update(main_emails)
         phones.update(main_phones)
-        contact_pages.update(get_contact_links(BeautifulSoup(requests.get(base_url).text, 'html.parser'), base_url))
+        contact_pages.update(get_contact_links(BeautifulSoup(
+            requests.get(base_url).text, 'html.parser'), base_url))
 
         for contact_page in contact_pages:
-            contact_emails, contact_phones, contact_url, contact_page_type = scrape_page(contact_page, 'contact')
+            contact_emails, contact_phones, contact_url, contact_page_type = scrape_page(
+                contact_page, 'contact')
             emails.update(contact_emails)
             phones.update(contact_phones)
 
@@ -256,7 +266,8 @@ def scrape_urls(df):
         """
         visited_urls = set()
         all_results = []
-        emails, phones, main_url, contact_pages = scrape_website_contacts(url, visited_urls=visited_urls)
+        emails, phones, main_url, contact_pages = scrape_website_contacts(
+            url, visited_urls=visited_urls)
 
         # Append the main page result
         all_results.append({
@@ -269,7 +280,8 @@ def scrape_urls(df):
 
         # Append the contact page results
         for contact_page in contact_pages:
-            contact_emails, contact_phones, contact_url, contact_page_type = scrape_website_main_page(contact_page, page_type='contact')
+            contact_emails, contact_phones, contact_url, contact_page_type = scrape_website_main_page(
+                contact_page, page_type='contact')
             all_results.append({
                 'Base Website': url,
                 'Scraped Page': contact_url,
@@ -293,7 +305,6 @@ def scrape_urls(df):
     return data
 
 
-
 def check_empty_or_nan(value):
     """
     Overi, zda je hodnota prazdna nebo NaN.
@@ -305,6 +316,7 @@ def check_empty_or_nan(value):
     bool: True, pokud je hodnota prazdna nebo NaN, jinak False
     """
     return pd.isna(value) or value == {} or value == [] or value == ''
+
 
 def process_data(max_iterations=0):
     """
@@ -318,7 +330,7 @@ def process_data(max_iterations=0):
     """
     df = data_prep(subset=False)
     scraped_dfs = []
-    
+
     df_split = np.array_split(df, 4)
 
     for df_part in tqdm(df_split):
@@ -332,10 +344,11 @@ def process_data(max_iterations=0):
         result_scraper["Emails"].apply(check_empty_or_nan) |
         result_scraper["Phone Numbers"].apply(check_empty_or_nan)
     ]["Base Website"]
-    
+
     iterations = 0
     while len(missing_data) > 0 and iterations < max_iterations:
-        print(f"Iteration {iterations + 1}: Found {len(missing_data)} websites with missing data. Scraping again.")
+        print(
+            f"Iteration {iterations + 1}: Found {len(missing_data)} websites with missing data. Scraping again.")
         set_not_found = list(set(missing_data))
         df = pd.DataFrame({"web": set_not_found})
 
@@ -345,9 +358,10 @@ def process_data(max_iterations=0):
             result = scrape_urls(df_part)
             scraped_data = pd.DataFrame(result)
             missing_scraped_dfs.append(scraped_data)
-        
-        new_scraped_data = pd.concat(missing_scraped_dfs).reset_index(drop=True)
-        
+
+        new_scraped_data = pd.concat(
+            missing_scraped_dfs).reset_index(drop=True)
+
         result_scraper = result_scraper.reset_index(drop=True)
         result_scraper.update(new_scraped_data)
 
@@ -355,21 +369,21 @@ def process_data(max_iterations=0):
             result_scraper["Emails"].apply(check_empty_or_nan) |
             result_scraper["Phone Numbers"].apply(check_empty_or_nan)
         ]["Base Website"]
-        
+
         iterations += 1
 
     if iterations == max_iterations and len(missing_data) > 0:
-        print(f"Reached maximum iterations ({max_iterations}). There are still {len(missing_data)} websites with missing data.")
+        print(
+            f"Reached maximum iterations ({max_iterations}). There are still {len(missing_data)} websites with missing data.")
     else:
         print("Scraping complete. No missing emails or phone numbers.")
 
     return result_scraper
 
 
-
 ###
 # Phones Part
-### 
+###
 def py_parse_phonenumber(num):
     """
     Analyzuje telefonni cislo a vraci informace o jeho formatu, platnosti a moznosti.
@@ -384,7 +398,7 @@ def py_parse_phonenumber(num):
         parsed_num = phonenumbers.parse(num, 'CZ')
         phonenumbers.is_possible_number_with_reason(parsed_num)
         return {
-            'formated_number':phonenumbers.format_number(parsed_num, phonenumbers.PhoneNumberFormat.E164),
+            'formated_number': phonenumbers.format_number(parsed_num, phonenumbers.PhoneNumberFormat.E164),
             'number': parsed_num.national_number,
             'prefix': parsed_num.country_code,
             'country_code': phonenumbers.region_code_for_number(parsed_num),
@@ -394,6 +408,7 @@ def py_parse_phonenumber(num):
         }
     except Exception as e:
         return {'number': num, 'prefix': None, 'country_code': None, 'valid': False, 'possible': False, 'parsed': False}
+
 
 def udf(df: pd.DataFrame, column_name: str):
     """
@@ -410,7 +425,8 @@ def udf(df: pd.DataFrame, column_name: str):
     parsed_df = pd.DataFrame(results.tolist())
     return parsed_df
 
-def explode_df(df:pd.DataFrame, column_name:str, web_column = "Base Website", scraped_web_column = "Scraped Page") -> pd.DataFrame:
+
+def explode_df(df: pd.DataFrame, column_name: str, web_column="Base Website", scraped_web_column="Scraped Page") -> pd.DataFrame:
     """
     Rozdeli hodnoty ve sloupci DataFrame a vytvori novy DataFrame s rozdelenymi hodnotami.
 
@@ -427,12 +443,16 @@ def explode_df(df:pd.DataFrame, column_name:str, web_column = "Base Website", sc
     df_res[f'{column_name}_scraped'] = df_res[column_name].str.split(', ')
     # df_res['emails_scraped'] = df_res['Emails'].str.split(', ')
     if scraped_web_column != "Scraped Page":
-        df_res_phones = df_res[[web_column,f"{column_name}_scraped"]]
-        df_res_exp = df_res_phones.explode(f'{column_name}_scraped').reset_index(drop=True)
+        df_res_phones = df_res[[web_column, f"{column_name}_scraped"]]
+        df_res_exp = df_res_phones.explode(
+            f'{column_name}_scraped').reset_index(drop=True)
         return df_res_exp
-    df_res_phones = df_res[[web_column, scraped_web_column,f"{column_name}_scraped"]]
-    df_res_exp = df_res_phones.explode(f'{column_name}_scraped').reset_index(drop=True)
+    df_res_phones = df_res[[web_column,
+                            scraped_web_column, f"{column_name}_scraped"]]
+    df_res_exp = df_res_phones.explode(
+        f'{column_name}_scraped').reset_index(drop=True)
     return df_res_exp
+
 
 def has_more_than_3_consecutive_zeros(number):
     """
@@ -447,7 +467,7 @@ def has_more_than_3_consecutive_zeros(number):
     return bool(re.search(r'0{4,}', str(number)))
 
 
-def clean_scraped_phones(df: pd.DataFrame, phone_scraped_column = "Phone Numbers", web_column = "Base Website",scraped_web_column = "Scraped Page") -> pd.DataFrame:
+def clean_scraped_phones(df: pd.DataFrame, phone_scraped_column="Phone Numbers", web_column="Base Website", scraped_web_column="Scraped Page") -> pd.DataFrame:
     """
     Cisti a formatuje telefonni cisla nalezena pri skriptovani.
 
@@ -460,16 +480,21 @@ def clean_scraped_phones(df: pd.DataFrame, phone_scraped_column = "Phone Numbers
     Navratova hodnota:
     pd.DataFrame: Cisteny a formatovany DataFrame s telefonni cisly
     """
-    phones_exp = explode_df(df,phone_scraped_column,web_column,scraped_web_column)
-    ress_df = udf(phones_exp,f"{phone_scraped_column}_scraped")
+    phones_exp = explode_df(df, phone_scraped_column,
+                            web_column, scraped_web_column)
+    ress_df = udf(phones_exp, f"{phone_scraped_column}_scraped")
     phones_exp["formated_number"] = ress_df["formated_number"]
-    phones_exp.drop(columns=[f"{phone_scraped_column}_scraped"], inplace= True)
-    phones_deduped = phones_exp.drop_duplicates(subset=[web_column, 'formated_number'])
-    filtered_df = phones_deduped[~phones_deduped['formated_number'].apply(has_more_than_3_consecutive_zeros)]
+    phones_exp.drop(columns=[f"{phone_scraped_column}_scraped"], inplace=True)
+    phones_deduped = phones_exp.drop_duplicates(
+        subset=[web_column, 'formated_number'])
+    filtered_df = phones_deduped[~phones_deduped['formated_number'].apply(
+        has_more_than_3_consecutive_zeros)]
     phones_df = filtered_df.sort_values(by="formated_number", ascending=True)
     return phones_df
 
-# Emails Part 
+# Emails Part
+
+
 def clean_email(email):
     """
     Cisti a formatuje emailove adresy.
@@ -483,7 +508,8 @@ def clean_email(email):
     if pd.isna(email):
         return email
     # Regular expression to find valid email addresses
-    email_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b')
+    email_pattern = re.compile(
+        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b')
     # Find all valid email addresses in the string and convert them to lowercase
     valid_emails = [e.lower() for e in email_pattern.findall(email)]
     # Fix emails that have additional symbols after specified domains
@@ -497,7 +523,8 @@ def clean_email(email):
         cleaned_emails.append(email)
     return ', '.join(cleaned_emails)
 
-def clean_scraped_emails(df: pd.DataFrame, email_scraped_column = "Emails", web_column = "Base Website") -> pd.DataFrame:
+
+def clean_scraped_emails(df: pd.DataFrame, email_scraped_column="Emails", web_column="Base Website") -> pd.DataFrame:
     """
     Cisti a formatuje emailove adresy nalezene pri skriptovani.
 
@@ -509,13 +536,16 @@ def clean_scraped_emails(df: pd.DataFrame, email_scraped_column = "Emails", web_
     Navratova hodnota:
     pd.DataFrame: Cisteny a formatovany DataFrame s emailovymi adresami
     """
-    emails_exp = explode_df(df,email_scraped_column)
-    emails_exp[f'{email_scraped_column}_scraped'] = emails_exp[f'{email_scraped_column}_scraped'].apply(clean_email)
-    emails_deduped = emails_exp.drop_duplicates(subset=[web_column, f'{email_scraped_column}_scraped'])
+    emails_exp = explode_df(df, email_scraped_column)
+    emails_exp[f'{email_scraped_column}_scraped'] = emails_exp[f'{email_scraped_column}_scraped'].apply(
+        clean_email)
+    emails_deduped = emails_exp.drop_duplicates(
+        subset=[web_column, f'{email_scraped_column}_scraped'])
     # emails_sorted = emails_deduped.sort_values(by="Emails_scraped", ascending=False)
     return emails_deduped
 
-def db_pomoci_transform(df:pd.DataFrame) -> pd.DataFrame:
+
+def db_pomoci_transform(df: pd.DataFrame) -> pd.DataFrame:
     """
     Pripravuje pocatecni data pro validaci.
 
@@ -526,17 +556,20 @@ def db_pomoci_transform(df:pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame: Upraveny DataFrame s pripravenymi daty
     """
     df['E_mail'] = df['E_mail'].apply(clean_email)
-    ress_df = udf(df,"Telefon")
+    ress_df = udf(df, "Telefon")
     df['Telefon'] = ress_df["formated_number"]
     df = df[~df["Webova_stranka"].isna()]
-    df.loc[df['Webova_stranka'].str.startswith('www'), 'web'] = df['Webova_stranka'].str.replace('^www', 'https://www', regex=True)
+    df.loc[df['Webova_stranka'].str.startswith(
+        'www'), 'web'] = df['Webova_stranka'].str.replace('^www', 'https://www', regex=True)
     return df
-  
+
+
 def main():
     """
     Hlavni funkce pro zpracovani a skriptovani dat. Vysledky uklada do CSV souboru.
     """
     result_scraper = process_data()
     result_scraper.to_csv(f'out/tables/df_scraped.csv', index=False)
+
 
 main()
